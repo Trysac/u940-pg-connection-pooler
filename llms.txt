@@ -1,0 +1,16 @@
+# pg-connection-pooler
+
+> PostgreSQL transaction-mode connection pooler speaking the v3 wire protocol, with md5 client auth, bounded wait queues and server reuse at idle ReadyForQuery Rust crate `trysac-pg-connection-pooler`, library `pg_connection_pooler`, MIT licensed,
+> Rust >= 1.88 (edition 2024), standard library only.
+
+## Docs
+
+- [README](README.md): problem, install, usage example
+- [AGENTS](AGENTS.md): commands, folder map, conventions, limits
+- [Architecture](docs/ARCHITECTURE.md): shape of the crate and its public API
+- [Testing](docs/TESTING.md): how to run and extend the tests
+
+## Optional
+
+- [Stack](docs/STACK.md): tools used and discarded
+- [Changelog](CHANGELOG.md): release history

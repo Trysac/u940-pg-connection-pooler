@@ -1,0 +1,33 @@
+# Factory-owned file: agents must not edit it. Dependencies are added by the factory (`cargo add`).
+[package]
+name = "trysac-pg-connection-pooler"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "PostgreSQL transaction-mode connection pooler speaking the v3 wire protocol, with md5 client auth, bounded wait queues and server reuse at idle ReadyForQuery"
+license = "MIT"
+repository = "https://github.com/Trysac/u940-pg-connection-pooler"
+readme = "README.md"
+# The gate tooling and the factory's files are not part of the published crate.
+exclude = ["scripts/", ".github/", ".semgrep/", "fabrica.json", "docs-manifest.json"]
+
+[lib]
+name = "pg_connection_pooler"
+path = "src/lib.rs"
+
+[features]
+# CI-only conformance tier: tests behind `#![cfg(feature = "conformance")]` run only when FABRICA_CI=1.
+conformance = []
+
+[dependencies]
+
+[dev-dependencies]
+proptest = { version = "1", default-features = false, features = ["std"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+# missing_docs is set in src/lib.rs: here it would also apply to every test crate under tests/.
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }

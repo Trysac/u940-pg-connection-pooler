@@ -1,35 +1,10 @@
 # Testing
 
-## Running
+## Local Test Tiers
 
-```sh
-cargo test                                                # unit, integration, property and doc tests
-cargo llvm-cov                                            # the same with a coverage summary
-cargo run --locked --manifest-path scripts/check/Cargo.toml   # every gate, as CI and the factory run it
-```
+- **Unit & Integration (`tests/api.rs`)**: Exercises RFC 1321 MD5 (`"abc"`), PostgreSQL `md5_password`, `SSLRequest` negotiation, `max_message_bytes` enforcement, transaction binding (`'T'`, `'E'`, `'I'`), dirty client disconnects, 50 ms `pool_timeout`, 101st client rejection at `max_clients = 100`, MD5 auth failures (`28P01`), SASL rejection (`28000`), named `Parse` refusal (`0A000`), and `TcpConnector` over loopback.
+- **Property tests (`proptest!`)**: Verifies wire framing roundtrips and `md5_password` invariants.
 
-## Policy
+## Conformance Tier (`tests/pgbench.rs`)
 
-- Line coverage of the library (measured by `cargo llvm-cov`) must stay at or above 80 %; the gate
-  fails below it.
-- Integration tests in `tests/` exercise the public API only. They assert every observable effect:
-  returned values, returned errors (`assert_eq!(f(x), Err(Error::...))`) and their messages.
-- Property tests (`proptest!`) state invariants such as idempotence or round trips; the README
-  example runs as a doc test.
-- Each bug fix starts with a failing test that reproduces it.
-- Tests are deterministic: no network, no wall clock, no dependence on test order.
-
-## Tiers
-
-- Local tier (every gate run, coverage measured here): unit, integration, property and doc tests, plus
-  conformance on small fixtures kept in the repository.
-- CI tier: conformance that needs an external tool or a download. Start the file under `tests/` with
-  `#![cfg(feature = "conformance")]`; `scripts/check` enables the `conformance` feature only when
-  `FABRICA_CI=1`, while clippy always compiles it. The CI `conformance` job sets `FABRICA_CI=1` and runs
-  the full suite. Tools are installed by the optional `ci/conformance-setup.sh` (bash, CI only; verify
-  every download against a pinned SHA-256), and tests skip cleanly when their tool is missing.
-
-## Layout
-
-Integration tests live in `tests/`, one file per area; private helpers may have `#[cfg(test)]` unit
-tests next to them. Fixtures and golden files go in `tests/fixtures/`.
+Behind `#![cfg(feature = "conformance")]`, runs `pgbench -i -s 1` and `pgbench -c 8 -j 2 -t 200 -M simple` through `Pooler` with `pool_size = 4` against a local PostgreSQL instance configured by `ci/conformance-setup.sh`.

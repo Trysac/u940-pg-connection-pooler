@@ -1,24 +1,8 @@
-# Security notes
+# Security Policy and Threat Model
 
-## Threat model
+## Threat Model
 
-`trysac-pg-connection-pooler` is a pure library without I/O. The main risks are:
-
-- **Supply chain**: a compromised dependency or CI action. Mitigation: standard library only,
-  `Cargo.lock` with crates.io checksums and `--locked` builds, `cargo-audit` (RustSec) and
-  OSV-Scanner in the gates, Dependabot weekly updates, actions pinned by commit SHA, minimal
-  workflow permissions.
-- **Leaked secrets**: tokens committed by mistake. Mitigation: `gitleaks` runs in the local gates
-  and in CI; `.env` files are git-ignored.
-- **Insecure code**: memory unsafety, disabled TLS verification, command injection. Mitigation:
-  `unsafe_code = "forbid"` in `Cargo.toml`, clippy with `-D warnings`, and the factory's Semgrep
-  rules (`.semgrep/factory-rules.yml`, `nosemgrep` ignored); fix the code instead of silencing it.
-- **Untrusted input**: callers may pass hostile strings. Mitigation: validate input and return
-  explicit errors; never panic on input; never spawn a shell with untrusted data.
-
-## Publishing
-
-Releases are git tags; publishing to crates.io needs a registry token, which is never stored in the
-repository.
-
-To report a vulnerability, see [SECURITY.md](../SECURITY.md).
+- **Oversized frame denial-of-service**: Every `read_startup` and `read_message` call validates the 4-byte wire length prefix against `Config::max_message_bytes` (default 16 MiB) before allocating the payload buffer, rejecting oversized frames with `PoolError` (`message_too_large`) and SQLSTATE `08P01`.
+- **Connection and queue exhaustion**: Concurrent client sessions are bounded by `Config::max_clients` (rejecting excess clients with SQLSTATE `53300`), and backend connections are bounded by `Config::pool_size` with `Config::pool_timeout` wait limits.
+- **Transaction state isolation**: A backend connection in state `'T'` or `'E'` is never returned to the idle pool; if the client disconnects mid-transaction, the backend connection is terminated and discarded.
+- **Credential redaction**: `PoolError`'s `Display` implementation never includes passwords or SQL query payloads.

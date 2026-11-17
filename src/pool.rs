@@ -493,10 +493,9 @@ impl Pooler {
                 }
             }
 
-            write_message(client, &msg).map_err(|e| PoolError::io(&e))?;
-
             if msg.tag == b'Z' {
-                client.flush().map_err(|e| PoolError::io(&e))?;
+                // Return an idle server to the pool before forwarding ReadyForQuery, so a
+                // client that has observed 'I' always sees the server counted as idle.
                 let status = msg.body.first().copied().unwrap_or(b'I');
                 if let Some((_, st)) = bound_server.as_mut() {
                     *st = status;
@@ -506,8 +505,12 @@ impl Pooler {
                 {
                     self.release_server(key, srv);
                 }
+                write_message(client, &msg).map_err(|e| PoolError::io(&e))?;
+                client.flush().map_err(|e| PoolError::io(&e))?;
                 return Ok(());
             }
+
+            write_message(client, &msg).map_err(|e| PoolError::io(&e))?;
 
             if flush_only && matches!(msg.tag, b'1' | b'2' | b'n' | b's' | b'C' | b'E' | b'I') {
                 client.flush().map_err(|e| PoolError::io(&e))?;

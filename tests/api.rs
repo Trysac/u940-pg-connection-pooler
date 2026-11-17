@@ -649,6 +649,8 @@ fn dirty_disconnect_discards_server_and_failed_tx_stays_bound_until_rollback() {
     )
     .unwrap();
     t2.join().unwrap().unwrap();
+    assert_eq!(pooler.stats().servers_idle, 1);
+    assert_eq!(pooler.stats().servers_active, 0);
 }
 
 #[test]

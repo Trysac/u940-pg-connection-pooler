@@ -498,12 +498,13 @@ impl Pooler {
             if msg.tag == b'Z' {
                 client.flush().map_err(|e| PoolError::io(&e))?;
                 let status = msg.body.first().copied().unwrap_or(b'I');
-                if status == b'I' {
-                    if let Some((srv, _)) = bound_server.take() {
-                        self.release_server(key, srv);
-                    }
-                } else if let Some((_, st)) = bound_server.as_mut() {
+                if let Some((_, st)) = bound_server.as_mut() {
                     *st = status;
+                }
+                if status == b'I'
+                    && let Some((srv, _)) = bound_server.take()
+                {
+                    self.release_server(key, srv);
                 }
                 return Ok(());
             }

@@ -1,42 +1,29 @@
-# pg-connection-pooler
+# trysac-pg-connection-pooler
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![CI](https://github.com/Trysac/u940-pg-connection-pooler/actions/workflows/ci.yml/badge.svg)](https://github.com/Trysac/u940-pg-connection-pooler/actions/workflows/ci.yml)
-
-PostgreSQL transaction-mode connection pooler speaking the v3 wire protocol, with md5 client auth, bounded wait queues and server reuse at idle ReadyForQuery
-
-## Problem
-
-Describe in two or three sentences the concrete problem this utility solves, who hits it, and what
-they do today without it. Replace this paragraph when the first real feature lands.
-
-## Install
-
-```sh
-cargo add trysac-pg-connection-pooler --git https://github.com/Trysac/u940-pg-connection-pooler
-```
-
-Requires Rust 1.88 or newer. No dependencies outside the standard library.
+PostgreSQL transaction-mode connection pooler speaking the v3.0 wire protocol, with MD5 client authentication, bounded wait queues, and server reuse at idle `ReadyForQuery`.
 
 ## Usage
 
 ```rust
-use pg_connection_pooler::{Error, normalize};
+use pg_connection_pooler::{Config, Pooler, TcpConnector, md5_password};
+use std::sync::Arc;
 
-// normalize trims surrounding whitespace and lower-cases the text.
-assert_eq!(normalize("  Hello World ").as_deref(), Ok("hello world"));
-
-// Blank input is rejected explicitly instead of returning an empty string.
-assert_eq!(pg_connection_pooler::normalize("   "), Err(Error::Blank));
+let hash = md5_password("bench", "pw", [1, 2, 3, 4]);
+assert_eq!(hash, "md5aac0038df22f496d2ca86cd9867ec66c");
+let connector = Arc::new(TcpConnector::new("127.0.0.1:5432", None));
+let pooler = Pooler::new(Config::default(), connector);
+assert_eq!(pooler.stats().clients, 0);
 ```
 
-## Documentation
+## CLI
 
-- [Architecture](docs/ARCHITECTURE.md) and [decisions](docs/decisions/)
-- [Testing](docs/TESTING.md) and [security](docs/SECURITY.md)
-- [Project record](docs/PROJECT.md) and [stack](docs/STACK.md)
-- [Changelog](CHANGELOG.md) and [contributing guide](CONTRIBUTING.md)
+```text
+pg-connection-pooler serve --listen 127.0.0.1:6432 --server 127.0.0.1:5432 --pool-size 10 --users users.txt
+```
 
-## License
+## Protocol and Pooling Notes
 
-[MIT](LICENSE) (c) 2026 Miguel Gomez
+- **Transaction pooling**: A backend connection is checked out when a client sends a query or extended-query message and returned to the idle pool only when the server emits `ReadyForQuery` with status `'I'` (idle). While the server reports `'T'` (in transaction) or `'E'` (failed transaction), the backend stays bound to that client. If a client disconnects while bound in `'T'` or `'E'`, the backend connection is closed and discarded.
+- **Prepared statements**: Unnamed prepared statements in the extended query protocol work across pooled connections. Named `Parse` (`'P'`) statements are rejected with SQLSTATE `0A000`.
+- **Cancel requests**: `CancelRequest` packets are accepted and dropped.
+- **Session state**: Session parameters changed via `SET` remain on the backend connection and are visible to subsequent clients in transaction mode, as in `PgBouncer`.

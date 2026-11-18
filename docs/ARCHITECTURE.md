@@ -1,31 +1,13 @@
 # Architecture
 
-## Purpose
+## Overview
 
-`trysac-pg-connection-pooler` is a small, dependency-free Rust library: PostgreSQL transaction-mode connection pooler speaking the v3 wire protocol, with md5 client auth, bounded wait queues and server reuse at idle ReadyForQuery
+`trysac-pg-connection-pooler` (library `pg_connection_pooler`) implements a PostgreSQL v3.0 wire-protocol transaction-mode connection pooler using only the Rust standard library.
 
-## Shape
+## Modules
 
-```text
-caller code --> crate pg_connection_pooler (src/lib.rs)
-                    |
-                    +-- pure functions, no I/O, no global mutable state
-                    +-- private modules under src/ (optional)
-```
-
-- **Public API**: every `pub` item reachable from `src/lib.rs`. Private modules and `pub(crate)` items
-  may change without a major version.
-- **Errors**: invalid input returns `Err` with the crate's `Error` enum (`#[non_exhaustive]`, so new
-  variants are not breaking). The library never panics on input, prints or exits.
-- **Side effects**: none. If a feature needs I/O, accept a trait (`std::io::Read` or a small custom
-  one) instead of opening resources, and record the choice in an ADR.
-- **Safety**: `unsafe` code is forbidden by the crate's lints.
-
-## Quality contract
-
-`scripts/check` is the single definition of the gates; `fabrica.json` tells the factory and CI
-how to run it. See [TESTING.md](TESTING.md).
-
-## Decisions
-
-Architecture decisions are recorded in [decisions/](decisions/) as numbered ADRs.
+- `src/md5.rs`: Pure-Rust implementation of RFC 1321 MD5 and PostgreSQL's `md5_password(user, password, salt)` (`"md5" + md5(md5(password + user) + salt)`).
+- `src/codec.rs`: Wire-protocol framing for `Startup` (`SSLRequest`, `GSSENCRequest`, `CancelRequest`, v3.0 `StartupMessage`) and tagged `Message` frames, with explicit `max_message_bytes` enforcement.
+- `src/connector.rs`: `ServerStream` and `Connector` traits plus `TcpConnector`, which completes backend startup (`AuthenticationOk`, `AuthenticationCleartextPassword`, `AuthenticationMD5Password`, `ParameterStatus`, `BackendKeyData`, `ReadyForQuery`).
+- `src/pool.rs`: `Pooler`, `Config`, and `Stats`. Coordinates client admission (`max_clients`), server checkout/checkin (`Mutex` + `Condvar` bounded by `pool_size` and `pool_timeout`), and transaction-state tracking on every `ReadyForQuery` (`'I'`, `'T'`, `'E'`).
+- `src/cli.rs`: Command-line interface (`serve --listen ... --server ... --pool-size ... --users ...`).

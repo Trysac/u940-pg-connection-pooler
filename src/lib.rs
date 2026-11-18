@@ -2,35 +2,14 @@
 #![doc = include_str!("../README.md")]
 #![warn(missing_docs)]
 
-use std::fmt;
+pub mod cli;
+pub mod codec;
+pub mod connector;
+pub mod error;
+pub mod md5;
+pub mod pool;
 
-/// Why an input was rejected.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum Error {
-    /// The input is empty or holds only whitespace.
-    Blank,
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Blank => f.write_str("input is blank"),
-        }
-    }
-}
-
-impl std::error::Error for Error {}
-
-/// Trims surrounding whitespace and lower-cases the text.
-///
-/// # Errors
-///
-/// Returns [`Error::Blank`] when nothing is left after trimming, instead of an empty string.
-pub fn normalize(input: &str) -> Result<String, Error> {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return Err(Error::Blank);
-    }
-    Ok(trimmed.to_lowercase())
-}
+pub use connector::{Connector, HandshakedTcpStream, ServerStream, TcpConnector};
+pub use error::{ErrorKind, PoolError};
+pub use md5::md5_password;
+pub use pool::{ClientStream, Config, Pooler, Stats};

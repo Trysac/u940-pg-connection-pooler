@@ -9,4 +9,5 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Added PostgreSQL v3.0 transaction-mode connection pooler (`Pooler`, `TcpConnector`, `codec`, `md5_password`, and CLI `serve` command).
 - Initial project structure from the factory utility template.

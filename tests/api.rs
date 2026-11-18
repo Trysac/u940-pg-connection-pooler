@@ -760,6 +760,126 @@ fn copy_from_stdin_relays_client_data_until_copy_done_or_fail() {
 }
 
 #[test]
+fn copy_from_stdin_passes_flush_and_sync_and_discards_server_on_unexpected_message() {
+    // Scripted server records every message it receives after CopyInResponse.
+    let received = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let rec = Arc::clone(&received);
+    let connector = Arc::new(ScriptedConnector::new(move |msg: &Message| {
+        if msg.tag == b'Q' {
+            return vec![Message {
+                tag: b'G',
+                body: vec![0, 0, 0],
+            }];
+        }
+        rec.lock().unwrap().push(msg.tag);
+        Vec::new()
+    }));
+    let pooler = Pooler::new(
+        Config {
+            pool_size: 1,
+            ..Config::default()
+        },
+        Arc::clone(&connector) as Arc<dyn Connector>,
+    );
+
+    let (mut client, server_end) = DuplexStream::pair();
+    let p = pooler.clone();
+    let handle = thread::spawn(move || p.handle_client(Box::new(server_end)));
+    client_handshake_trust(&mut client, "bench", "app");
+
+    write_message(&mut client, &make_query("COPY t FROM STDIN")).unwrap();
+    assert_eq!(read_message(&mut client, 16_777_216).unwrap().tag, b'G');
+    for tag in *b"dHS" {
+        write_message(
+            &mut client,
+            &Message {
+                tag,
+                body: Vec::new(),
+            },
+        )
+        .unwrap();
+    }
+    // A simple Query is not allowed while COPY is in progress.
+    write_message(&mut client, &make_query("SELECT 1")).unwrap();
+    let err = read_message(&mut client, 16_777_216).unwrap();
+    let (code, text) = extract_error_fields(&err);
+    assert_eq!(code, "08P01");
+    assert_eq!(text, "unexpected message during COPY");
+
+    let res = handle.join().unwrap();
+    assert_eq!(res.unwrap_err().code(), "protocol_violation");
+    assert_eq!(*received.lock().unwrap(), b"dHS".to_vec());
+    // The server was left mid-COPY, so it is discarded instead of returned to the pool.
+    assert_eq!(pooler.stats().servers_idle, 0);
+    assert_eq!(pooler.stats().servers_active, 0);
+}
+
+#[test]
+fn full_pool_evicts_idle_server_of_another_user_database_pair() {
+    let connector = Arc::new(ScriptedConnector::default_tx_aware());
+    let pooler = Pooler::new(
+        Config {
+            pool_size: 1,
+            ..Config::default()
+        },
+        Arc::clone(&connector) as Arc<dyn Connector>,
+    );
+
+    // Client for ("bench", "app") runs a query; its server goes back to the idle pool.
+    let (mut c1, s1) = DuplexStream::pair();
+    let p1 = pooler.clone();
+    let t1 = thread::spawn(move || p1.handle_client(Box::new(s1)));
+    client_handshake_trust(&mut c1, "bench", "app");
+    write_message(&mut c1, &make_query("SELECT 1")).unwrap();
+    assert_eq!(read_message(&mut c1, 16_777_216).unwrap().tag, b'C');
+    assert_eq!(
+        read_message(&mut c1, 16_777_216).unwrap(),
+        ready_for_query(b'I')
+    );
+    assert_eq!(pooler.stats().servers_idle, 1);
+
+    // Client for ("bench", "other") cannot reuse it, so the idle server is closed and replaced.
+    let (mut c2, s2) = DuplexStream::pair();
+    let p2 = pooler.clone();
+    let t2 = thread::spawn(move || p2.handle_client(Box::new(s2)));
+    client_handshake_trust(&mut c2, "bench", "other");
+    write_message(&mut c2, &make_query("SELECT 1")).unwrap();
+    assert_eq!(read_message(&mut c2, 16_777_216).unwrap().tag, b'C');
+    assert_eq!(
+        read_message(&mut c2, 16_777_216).unwrap(),
+        ready_for_query(b'I')
+    );
+    assert_eq!(connector.connects.load(Ordering::SeqCst), 2);
+    assert_eq!(pooler.stats().servers_idle, 1);
+    assert_eq!(pooler.stats().servers_active, 0);
+
+    for (mut c, t) in [(c1, t1), (c2, t2)] {
+        write_message(
+            &mut c,
+            &Message {
+                tag: b'X',
+                body: Vec::new(),
+            },
+        )
+        .unwrap();
+        t.join().unwrap().unwrap();
+    }
+}
+
+#[test]
+fn config_debug_reports_user_count_without_passwords() {
+    let config = Config {
+        pool_size: 7,
+        users: vec![("bench".to_string(), "s3cret-pw".to_string())],
+        ..Config::default()
+    };
+    let shown = format!("{config:?}");
+    assert!(shown.contains("pool_size: 7"), "{shown}");
+    assert!(shown.contains("users_count: 1"), "{shown}");
+    assert!(!shown.contains("s3cret-pw"), "{shown}");
+}
+
+#[test]
 #[allow(clippy::too_many_lines)]
 fn md5_auth_wrong_password_and_sasl_unsupported_and_named_parse_refused() {
     // 1. Client with wrong md5 password receives SQLSTATE "28P01" and is closed.

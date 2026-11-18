@@ -512,9 +512,54 @@ impl Pooler {
 
             write_message(client, &msg).map_err(|e| PoolError::io(&e))?;
 
+            if msg.tag == b'G' {
+                // CopyInResponse: the server now waits for the client's COPY data.
+                client.flush().map_err(|e| PoolError::io(&e))?;
+                if let Err(err) = self.relay_copy_in(client, bound_server) {
+                    // A server left mid-COPY can never be reused.
+                    if let Some((dead, _)) = bound_server.take() {
+                        self.discard_server(dead);
+                    }
+                    return Err(err);
+                }
+                continue;
+            }
+
             if flush_only && matches!(msg.tag, b'1' | b'2' | b'n' | b's' | b'C' | b'E' | b'I') {
                 client.flush().map_err(|e| PoolError::io(&e))?;
                 return Ok(());
+            }
+        }
+    }
+
+    /// Forwards the client's COPY FROM STDIN stream to the bound server.
+    ///
+    /// `CopyData` ('d'), `Flush` ('H') and `Sync` ('S') are passed through until the client
+    /// ends the copy with `CopyDone` ('c') or `CopyFail` ('f'); the server then answers with
+    /// its usual `CommandComplete`/`ErrorResponse` and `ReadyForQuery`, which the caller relays.
+    fn relay_copy_in(
+        &self,
+        client: &mut dyn ClientStream,
+        bound_server: &mut Option<(Box<dyn ServerStream>, u8)>,
+    ) -> Result<(), PoolError> {
+        let max_bytes = self.inner.config.max_message_bytes;
+        loop {
+            let msg = read_message(client, max_bytes)?;
+            match msg.tag {
+                b'd' | b'H' | b'S' => self.send_to_bound_server(bound_server, &msg)?,
+                b'c' | b'f' => {
+                    self.send_to_bound_server(bound_server, &msg)?;
+                    if let Some((srv, _)) = bound_server.as_mut() {
+                        srv.flush().map_err(|e| PoolError::io(&e))?;
+                    }
+                    return Ok(());
+                }
+                _ => {
+                    let _ = send_error_and_flush(client, "08P01", "unexpected message during COPY");
+                    return Err(PoolError::protocol_violation(
+                        "unexpected message during COPY",
+                    ));
+                }
             }
         }
     }

@@ -654,6 +654,112 @@ fn dirty_disconnect_discards_server_and_failed_tx_stays_bound_until_rollback() {
 }
 
 #[test]
+fn copy_from_stdin_relays_client_data_until_copy_done_or_fail() {
+    // Scripted server: "COPY" answers CopyInResponse, CopyData is recorded,
+    // CopyDone completes the command and CopyFail reports an error.
+    let received = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
+    let rec = Arc::clone(&received);
+    let connector = Arc::new(ScriptedConnector::new(move |msg: &Message| match msg.tag {
+        b'Q' => vec![Message {
+            tag: b'G',
+            body: vec![0, 0, 0],
+        }],
+        b'd' => {
+            rec.lock().unwrap().push(msg.body.clone());
+            Vec::new()
+        }
+        b'c' => vec![
+            Message {
+                tag: b'C',
+                body: b"COPY 2\0".to_vec(),
+            },
+            ready_for_query(b'I'),
+        ],
+        b'f' => vec![
+            error_response("57014", "COPY from stdin failed"),
+            ready_for_query(b'I'),
+        ],
+        _ => Vec::new(),
+    }));
+    let pooler = Pooler::new(
+        Config {
+            pool_size: 1,
+            ..Config::default()
+        },
+        Arc::clone(&connector) as Arc<dyn Connector>,
+    );
+
+    let (mut client, server_end) = DuplexStream::pair();
+    let p = pooler.clone();
+    let handle = thread::spawn(move || p.handle_client(Box::new(server_end)));
+    client_handshake_trust(&mut client, "bench", "app");
+
+    // COPY ... FROM STDIN finished with CopyDone
+    write_message(&mut client, &make_query("COPY t FROM STDIN")).unwrap();
+    assert_eq!(read_message(&mut client, 16_777_216).unwrap().tag, b'G');
+    for row in [b"1\ta\n".to_vec(), b"2\tb\n".to_vec()] {
+        write_message(
+            &mut client,
+            &Message {
+                tag: b'd',
+                body: row,
+            },
+        )
+        .unwrap();
+    }
+    write_message(
+        &mut client,
+        &Message {
+            tag: b'c',
+            body: Vec::new(),
+        },
+    )
+    .unwrap();
+    let done = read_message(&mut client, 16_777_216).unwrap();
+    assert_eq!(done.tag, b'C');
+    assert_eq!(done.body, b"COPY 2\0".to_vec());
+    assert_eq!(
+        read_message(&mut client, 16_777_216).unwrap(),
+        ready_for_query(b'I')
+    );
+    assert_eq!(
+        *received.lock().unwrap(),
+        vec![b"1\ta\n".to_vec(), b"2\tb\n".to_vec()]
+    );
+    assert_eq!(pooler.stats().servers_idle, 1);
+
+    // COPY ... FROM STDIN aborted with CopyFail reuses the same server
+    write_message(&mut client, &make_query("COPY t FROM STDIN")).unwrap();
+    assert_eq!(read_message(&mut client, 16_777_216).unwrap().tag, b'G');
+    write_message(
+        &mut client,
+        &Message {
+            tag: b'f',
+            body: b"aborted\0".to_vec(),
+        },
+    )
+    .unwrap();
+    let err = read_message(&mut client, 16_777_216).unwrap();
+    assert_eq!(extract_error_fields(&err).0, "57014");
+    assert_eq!(
+        read_message(&mut client, 16_777_216).unwrap(),
+        ready_for_query(b'I')
+    );
+    assert_eq!(connector.connects.load(Ordering::SeqCst), 1);
+    assert_eq!(pooler.stats().servers_idle, 1);
+
+    write_message(
+        &mut client,
+        &Message {
+            tag: b'X',
+            body: Vec::new(),
+        },
+    )
+    .unwrap();
+    handle.join().unwrap().unwrap();
+}
+
+#[test]
 #[allow(clippy::too_many_lines)]
 fn md5_auth_wrong_password_and_sasl_unsupported_and_named_parse_refused() {
     // 1. Client with wrong md5 password receives SQLSTATE "28P01" and is closed.
